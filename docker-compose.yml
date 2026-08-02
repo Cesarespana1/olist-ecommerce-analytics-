@@ -1,0 +1,29 @@
+name: olist_ecommerce_project
+
+services:
+  postgres:
+    image: postgres:15
+    env_file:
+      - ./pipeline/.env
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    volumes:
+      - olist_db:/var/lib/postgresql/data
+    ports:
+      - 5432:5432
+  pipeline:
+    build: ./pipeline
+    env_file:
+      - ./pipeline/.env
+    environment:
+      - HOST=postgres
+    depends_on:
+      postgres:
+        condition: service_healthy 
+
+volumes:
+  olist_db:

@@ -1,0 +1,20 @@
+[project]
+name = "dbt-project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Cesarespana1", email = "167690467+Cesarespana1@users.noreply.github.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "dbt-core>=1.12.0",
+    "dbt-postgres>=1.11.0",
+]
+
+[tool.uv]
+package = false
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"
