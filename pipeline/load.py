@@ -39,7 +39,8 @@ def run(table_name: str, file_path: str, engine: Engine) -> None:
                 name=table_name,
                 con=engine,
                 if_exists='replace',
-                schema="raw"
+                schema="raw",
+                index=False
             )
         first = False
 
@@ -47,7 +48,8 @@ def run(table_name: str, file_path: str, engine: Engine) -> None:
             name=table_name,
             con=engine,
             if_exists='append',
-            schema="raw"
+            schema="raw",
+            index=False
         )
 
 def main() -> None:
