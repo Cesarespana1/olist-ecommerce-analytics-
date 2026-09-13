@@ -1,7 +1,7 @@
 select
     {{ dbt_utils.generate_surrogate_key(['p.product_id']) }} as product_key,
     p.product_id,
-    t.product_category_name_english,
+    coalesce(t.product_category_name_english, p.product_category_name, 'unknown category') as product_category_name_english,
     p.product_weight_g, 
     p.product_length_cm, 
     p.product_height_cm, 

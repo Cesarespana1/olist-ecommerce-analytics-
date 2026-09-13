@@ -2,7 +2,7 @@ with date_spine as (
     {{dbt_utils.date_spine(
         datepart="day",
         start_date="cast('2016-09-01' as date)",
-        end_date="cast('2020-04-09' as date)"
+        end_date="cast('2020-04-11' as date)"
     )}} )
 
 select

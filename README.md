@@ -13,6 +13,7 @@ Business questions explored:
 
 What factors are most associated with delivery delays and negative customer reviews?
 Which product categories and regions drive the most revenue and repeat purchases?
+Are there repeat customers, and what differentiates them from one-time buyers?
 How does payment method choice relate to order value and customer satisfaction?
 Which sellers show the strongest performance in terms of volume, delivery time, and review scores?
 
