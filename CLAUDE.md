@@ -52,9 +52,9 @@ dim_date
 
 date_key (PK), full date, day, month, year, day of week
 
-dim_geolocation (optional, only for geospatial analysis)
+dim_geolocation (built — used for map visuals in Power BI)
 
-zip_code_prefix (PK), lat (average), lng (average), city ⚠️ Note: the same zip_code_prefix has multiple lat/lng rows in the original CSV — aggregate (average) before using it as a dimension, or joins will duplicate rows.
+geo_zip_code_prefix (PK), geolocation_city, geolocation_state, geolocation_lat (averaged), geolocation_lng (averaged) ⚠️ Note: the same zip_code_prefix has multiple rows in the original CSV, so EVERY non-key column must be aggregated or joins will duplicate rows. 19,015 distinct zip prefixes expand to 27,912 distinct (zip, city, state) combinations, because Brazilian city names appear with inconsistent accents and punctuation (zip 13318 alone has five spellings spanning two town names). Resolved with avg() for the coordinates and mode() within group for city and state — mode() picks the most frequent spelling, whereas min() would have returned a different town entirely. Result is exactly one row per zip prefix, enforced by a unique test. Joins to dim_customers / dim_sellers on their zip_code_prefix columns.
 
 dim_orders (BRIDGE dimension — from olist_orders_dataset)
 
@@ -79,45 +79,78 @@ Are there repeat customers (using customer_unique_id), and what differentiates t
 Is payment method related to order value or customer satisfaction?
 Which sellers perform best combining volume, delivery time, and review scores?
 Folder structure
+Note: there is deliberately NO models/intermediate/ layer. The staging models are thin
+enough that marts read directly from them; adding an empty layer would be cargo-culting.
+
 olist-ecommerce-analytics/
-├── docker-compose.yml         ⬜ Pending (file exists but currently empty — postgres + pipeline services)
-├── .env.example                ⬜ Pending (not yet created)
+├── docker-compose.yml          postgres (healthcheck) + pipeline (depends_on: service_healthy)
 ├── .gitignore
+├── CLAUDE.md
+├── README.md                   needs rewriting with the drafted description + screenshots
+├── .env.example               ⬜ NOT created — see REMAINING in project status
 ├── pipeline/
-│   ├── load.py                 ⬜ Pending (currently empty — kagglehub + pandas + sqlalchemy → "raw" schema)
-│   ├── pyproject.toml          ⬜ Pending (uv-managed, replaces requirements.txt)
-│   ├── uv.lock                 ⬜ Pending
-│   └── Dockerfile              ⬜ Pending
-├── dbt_project/               ⬜ Pending initialization
+│   ├── .env                    gitignored, never committed
+│   ├── load.py                 chunked streaming ingestion → "raw" schema
+│   ├── Dockerfile              uv-based image
+│   ├── pyproject.toml          uv-managed, replaces requirements.txt
+│   └── uv.lock
+├── dbt_project/
+│   ├── dbt_project.yml
+│   ├── packages.yml            dbt_utils
+│   ├── package-lock.yml
+│   ├── pyproject.toml          uv-managed (this is why dbt runs as `uv run dbt`)
+│   ├── uv.lock
 │   ├── models/
-│   │   ├── staging/
-│   │   ├── intermediate/
-│   │   └── marts/
-│   ├── tests/
-│   └── dbt_project.yml
+│   │   ├── staging/            sources.yml + 9 stg_* models (1 per raw table)
+│   │   │                       ⬜ no schema.yml yet — all tests currently live in marts
+│   │   └── marts/              schema.yml (107 tests) + 9 models:
+│   │                           dim_customers, dim_date, dim_geolocation, dim_orders,
+│   │                           dim_products, dim_sellers,
+│   │                           fact_order_items, fact_payments, fact_reviews
+│   ├── macros/                 empty
+│   ├── tests/                  empty (no singular tests; all are generic, in schema.yml)
+│   └── target/                 gitignored — holds static_index.html for dbt docs
 ├── powerbi/
 │   └── dashboard.pbix         ⬜ Pending
-├── screenshots/
-│   └── lineage_graph.png      ⬜ Pending (dbt docs generate)
-└── README.md                   ⬜ Pending (use the project description already drafted)
+└── screenshots/
+    └── lineage_graph.png      ⬜ Pending (current screenshot predates dim_geolocation)
 Current project status
- Dataset explored and columns confirmed (customer_id vs customer_unique_id, order_items grain, payments 1:N)
- Star schema designed and validated (see above)
- .gitignore written
- Postgres 15 run manually via `docker run` (not docker-compose yet, deliberately — internalizing the flags by hand before abstracting them) — confirmed booted and reachable via `docker exec ... psql`
- docker-compose.yml — NOT yet written (file exists on disk but is empty)
- .env.example — NOT yet created
- requirements.txt — being replaced by pyproject.toml + uv.lock (uv-managed), living inside pipeline/, instead of a plain requirements.txt at the repo root
- Ingestion script pipeline/load.py — folder renamed from ingestion/ to pipeline/; load.py itself is still empty, not yet written
- Next step: install uv, run `uv init` + `uv add <deps>` inside pipeline/ to generate pyproject.toml + uv.lock, write pipeline/load.py (kagglehub + pandas + sqlalchemy → "raw" schema), and test it locally with `uv run` against the manually-running Postgres container
- Then: write pipeline/Dockerfile (uv-based image), write docker-compose.yml (postgres + pipeline services, postgres healthcheck + pipeline's depends_on: service_healthy), run docker compose up -d and confirm the 9 raw tables load correctly into Postgres
- Initialize the dbt project, connect it to Postgres
- Write staging models (1 per raw table, basic cleanup)
- Write mart models (full star schema above)
- Add dbt tests (unique, not_null, relationships)
- Generate dbt docs (lineage graph) for the README
- Build the Power BI dashboard answering the 5 business questions
- Write the final README.md with the project description (already drafted, see section below) + dashboard screenshots
+Dataset explored and columns confirmed (customer_id vs customer_unique_id, order_items grain, payments 1:N)
+Star schema designed and validated (see above)
+.gitignore written
+docker-compose.yml written and working (postgres service with pg_isready healthcheck + pipeline service with depends_on: service_healthy)
+pipeline/ uses uv (pyproject.toml + uv.lock) instead of requirements.txt, including inside its Dockerfile
+pipeline/load.py written and working: chunked streaming ingestion (pd.read_csv iterator), logging, idempotent head(0)/replace then append, all 9 raw tables loaded
+dbt project initialized and connected to Postgres (dbt Core 1.12.0 + dbt-postgres 1.11.0; note dbt Fusion does not support Postgres, so run dbt via `uv run dbt` from dbt_project/)
+Staging models written — 9 models, 1 per raw table, with explicit type casting
+Mart models written — full star schema, 9 marts (dim_customers, dim_date, dim_geolocation, dim_orders, dim_products, dim_sellers, fact_order_items, fact_payments, fact_reviews)
+dbt tests written — 107 tests: 98 pass, 9 documented warnings, 0 errors
+dbt docs generated (lineage graph viewable via target/static_index.html; port forwarding in Codespaces is unreliable, download the static file and open it locally)
+REMAINING: staging schema.yml (all tests currently live in marts; a staging failure should say WHERE it broke, and the product_category_name not_null test belongs there)
+REMAINING: regenerate the lineage graph screenshot into screenshots/lineage_graph.png (the current one predates dim_geolocation)
+REMAINING: 3 dbt deprecation warnings (combination_of_columns needs nesting under `arguments:`) and dim_date's description has its date range reversed
+REMAINING: Power BI dashboard answering the 5 business questions
+REMAINING: final README.md (description already drafted below + lineage graph + dashboard screenshots)
+REMAINING: .env.example is missing. pipeline/.env is correctly gitignored, but someone cloning this repo has no way to know which variables to set. Needs POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, HOST, PORT, KAGGLE_API_TOKEN with placeholder values. Cheap to add and reviewers notice its absence.
+REMAINING: rotate the Kaggle API token. It was printed into a session transcript while reading pipeline/.env. It was never committed (verified with git log --all -- pipeline/.env), so this is precautionary rather than urgent.
+
+dbt operational notes (learned the hard way — not derivable from the code)
+
+Run dbt as `uv run dbt` from inside dbt_project/. A bare `dbt` resolves to dbt Fusion 2.0, which refuses Postgres outright ("the 'postgres' adapter is not yet supported by dbt Fusion"). This also blocks the official dbt VS Code extension.
+
+Views cascade-drop. Every model is materialized as a view, so rebuilding an upstream model DROPS all of its downstream views. Rebuilding dim_date silently destroyed all three fact tables — twice. Always rebuild descendants with `dbt run --select <model>+` (the trailing + means "and everything downstream").
+
+`dbt build` stops downstream work when a test errors. One failing dim_orders test produced SKIP=34, so the fact models never got rebuilt. Combined with the cascade-drop above, this leaves fact views MISSING from the database while the run output still looks mostly fine. If tests suddenly fail with "relation does not exist", this is why — re-run the models, don't debug the tests.
+
+A malformed test definition fails SILENTLY. A data_tests: block written as a YAML mapping instead of a list was discarded with no error and no warning — the tests simply did not exist. `dbt ls --resource-type test --select <model>` is the only reliable way to confirm a test is real. Always run it after adding tests.
+
+Postgres connection details (non-obvious): container olist_ecommerce_project-postgres-1, user `root` (NOT postgres), database `olist-ecommerce` (contains a hyphen, so it needs quoting in SQL), schemas `raw` (ingested tables) and `analytics` (all dbt models). Start it with `docker compose up -d postgres` — the Codespace does not keep it running between sessions.
+
+dbt docs in Codespaces: port forwarding is unreliable and repeatedly failed (both `dbt docs serve` and a plain python http.server). Use `dbt docs generate --static`, then DOWNLOAD target/static_index.html and open it locally in a real browser. Opening it inside VS Code renders a blank page because scripts are sandboxed there. Also note `dbt docs serve` throws a traceback on Ctrl+C — that is normal, not an error.
+
+Power BI connectivity — decide before starting the dashboard
+Postgres runs inside the Codespace; Power BI Desktop runs on a local Windows machine and cannot reach it. Three options: (1) run the same docker-compose stack locally with Docker Desktop — cleanest, keeps the live-warehouse-connection story intact; (2) forward port 5432 publicly from the Codespace — works but exposes a database to the internet; (3) export the marts to CSV/Parquet — simplest but loses the "BI tool connected to a warehouse" narrative.
+
 Project description (for README, already drafted)
 
 Short description:
@@ -138,6 +171,52 @@ Analysis: Business questions are answered using SQL — including joins, CTEs, a
 Visualization: Key metrics and insights are presented in an interactive Power BI dashboard.
 
 Tech stack: Docker, PostgreSQL, Python, dbt, SQL, Power BI
+
+Portfolio talking points (for the README)
+
+Findings from actually investigating test failures instead of silencing them. Keep the concrete numbers — they are what make these credible.
+
+Anomaly investigation: 14 orders marked delivered with no approval timestamp
+All 14 have payment records totalling R$1,954.60, so the approval event definitely happened and only the timestamp is missing. Conclusion: a source-system logging gap affecting 0.015% of 96,478 delivered orders, not a business-process problem.
+Method point worth telling: review scores were considered as evidence and rejected. There is no causal path from "a timestamp failed to write" to "the customer liked the product", so review scores cannot discriminate between the hypotheses; payment records can.
+Baseline discipline: those 14 orders average 4.36 review score, which only means something next to the 4.16 population average. Their average was above baseline while their 5-star share (57.1%) was below it (59.2%) — metrics pointing in opposite directions is the signature of small-sample noise (n=14, SE about +/-0.37).
+
+review_id is not a primary key: 789 duplicates
+The same review_id appears on 2-3 different order_ids with the same score — one review covering several orders.
+Real grain is (review_id, order_id), enforced with dbt_utils.unique_combination_of_columns.
+Matters for business question 1: naively averaging review_score double-counts these rows.
+
+Silent placeholder data: 4 products with weight 0 g
+All bed_bath_table, identical 30x25 dimensions, and actually sold 8 times, so they are not unused rows.
+A weight of 0 g is physically impossible, so it is placeholder data rather than a measurement — and not_null cannot see it. Fixed with nullif(product_weight_g, 0) in staging plus dbt_utils.accepted_range.
+Deliberate contrast: 9 payments of R$0.00 (6 voucher, 3 not_defined) were kept as valid, because zero is unusual there but not impossible.
+
+Silent row loss: an inner join dropped 623 products
+dim_products originally inner-joined the category translation table, cutting 32,951 products to 32,328 and silently orphaning 1,627 fact rows.
+Root cause: 610 source NULLs plus 13 products in two categories absent from the translation table (portateis_cozinha_e_preparadores_de_alimentos, pc_gamer).
+Fixed with a left join and a three-argument coalesce falling back to the Portuguese name, then 'unknown category'. Verified 112,650/112,650 fact rows match.
+
+Join fan-out prevented in dim_geolocation
+19,015 distinct zip prefixes but 27,912 distinct (zip, city, state) combinations, because Brazilian city names appear with inconsistent accents and punctuation — zip 13318 alone has five spellings spanning two town names.
+Collapsed to exactly one row per zip: avg() for coordinates, mode() within group for city and state. mode() picks the most frequent spelling; min() would have returned a different town entirely.
+
+A dimension coverage gap caught by a test
+A shipping_limit_date of 2020-04-09 fell one day past dim_date's upper bound, producing 2 null date keys. Found by a not_null test, not by inspection.
+
+Testing practices worth explaining
+unique belongs only on grain keys. Four early tests put unique on fact-table foreign keys, which asserts the opposite of a star schema (a product could only ever be sold once). Fact grains need composite tests instead.
+Scoping separates "missing" from "not applicable": where: "order_status = 'delivered'" takes 1,783 null carrier dates down to 2, because an unavailable order was never handed to a carrier.
+error_if thresholds turn known anomalies into regression guards ("8 is the baseline, alert if it exceeds 10"), which is a different statement from severity: warn ("never block, at any volume").
+Beware hollow greens: a not_null test on a column that a coalesce already backfills always passes and asserts nothing. That test belongs upstream in staging.
+Malformed test definitions fail silently. A data_tests: block written as a mapping instead of a list was discarded with no error and no warning — the tests simply did not exist. dbt ls --resource-type test --select <model> is the only way to confirm a test is real.
+
+Design decisions to explain
+dim_orders is a bridge dimension: no fact table joins another fact table, everything routes through it. This is what prevents row-duplication fan-out in Power BI, and it is visible in the lineage graph.
+customer_id is unique per order while customer_unique_id identifies the person. The grain choice is deliberate and documented because it affects all repeat-customer analysis.
+dim_date has no upstream source because it is generated with dbt_utils.date_spine — expected for a date dimension, but worth being ready to explain.
+The 9 remaining test warnings are documented source-data gaps, each investigated, not thresholds set to make red disappear.
+
+Final test suite: 107 tests, 98 pass, 9 documented warnings, 0 errors.
 
 Style / preference notes
 The user prefers honest, calibrated explanations (neither optimistic nor pessimistic), with step-by-step reasoning before the final answer.

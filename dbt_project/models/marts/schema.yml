@@ -73,6 +73,38 @@ models:
       Day of the week of the date, can be one of the following, Monday, Tuesday, Wednesday, Thursday, Friday, Saturday and Sunday.
     data_tests:
     - not_null
+- name: dim_geolocation
+  description: |
+    Dimension table containing olist ecommerce geo-espacial information
+    Note: to avoid duplicated rows on possible joins lat and lng are averaged
+    based on zip code
+  columns:
+  - name: geo_zip_code_prefix
+    description: >
+      Zip code prefix of the geolocation information
+    data_tests:
+    - not_null
+    - unique
+  - name: geolocation_lat
+    description: >
+      Average latitude of the geolocation information based on zip code
+    data_tests:
+    - not_null
+  - name: geolocation_lng
+    description: >
+      Average longitude of the geolocation information based on zip code
+    data_tests:
+    - not_null
+  - name: geolocation_city
+    description: >
+      Most common city of the geolocation information based on zip code
+    data_tests:
+    - not_null
+  - name: geolocation_state
+    description: >
+      Most common state of the geolocation information based on zip code
+    data_tests:
+    - not_null
 - name: dim_orders
   description: |
     Bridge dimension containing order information from olist dataset.
