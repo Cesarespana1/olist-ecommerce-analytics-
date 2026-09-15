@@ -223,3 +223,6 @@ __marimo__/
 #dbt run logs and scratch SQL files
 /logs
 *.session.sql
+
+# generated yml
+.user.yml

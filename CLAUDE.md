@@ -87,15 +87,16 @@ olist-ecommerce-analytics/
 ├── .gitignore
 ├── CLAUDE.md
 ├── README.md                   needs rewriting with the drafted description + screenshots
-├── .env.example               ⬜ NOT created — see REMAINING in project status
 ├── pipeline/
 │   ├── .env                    gitignored, never committed
+│   ├── .env.example            committed — placeholders for the 5 Postgres vars
 │   ├── load.py                 chunked streaming ingestion → "raw" schema
 │   ├── Dockerfile              uv-based image
 │   ├── pyproject.toml          uv-managed, replaces requirements.txt
 │   └── uv.lock
 ├── dbt_project/
 │   ├── dbt_project.yml
+│   ├── profiles.yml            committed — reads env vars via env_var(), no secrets
 │   ├── packages.yml            dbt_utils
 │   ├── package-lock.yml
 │   ├── pyproject.toml          uv-managed (this is why dbt runs as `uv run dbt`)
@@ -126,13 +127,14 @@ Staging models written — 9 models, 1 per raw table, with explicit type casting
 Mart models written — full star schema, 9 marts (dim_customers, dim_date, dim_geolocation, dim_orders, dim_products, dim_sellers, fact_order_items, fact_payments, fact_reviews)
 dbt tests written — 107 tests: 98 pass, 9 documented warnings, 0 errors
 dbt docs generated (lineage graph viewable via target/static_index.html; port forwarding in Codespaces is unreliable, download the static file and open it locally)
+pipeline/.env.example written (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, HOST, PORT). KAGGLE_API_TOKEN was dropped — it was read by nothing (load.py reads only the 5 Postgres vars, and kagglehub authenticates via ~/.kaggle/kaggle.json or KAGGLE_USERNAME/KAGGLE_KEY, never that name)
+dbt_project/profiles.yml now lives in the repo instead of ~/.dbt/, using env_var() so it holds no credentials. ~/.dbt/profiles.yml deleted so there is no stale fallback. This closed a gap that was never on this list: before it, a clone could not run dbt at all
 REMAINING: staging schema.yml (all tests currently live in marts; a staging failure should say WHERE it broke, and the product_category_name not_null test belongs there)
 REMAINING: regenerate the lineage graph screenshot into screenshots/lineage_graph.png (the current one predates dim_geolocation)
 REMAINING: 3 dbt deprecation warnings (combination_of_columns needs nesting under `arguments:`) and dim_date's description has its date range reversed
 REMAINING: Power BI dashboard answering the 5 business questions
-REMAINING: final README.md (description already drafted below + lineage graph + dashboard screenshots)
-REMAINING: .env.example is missing. pipeline/.env is correctly gitignored, but someone cloning this repo has no way to know which variables to set. Needs POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, HOST, PORT, KAGGLE_API_TOKEN with placeholder values. Cheap to add and reviewers notice its absence.
-REMAINING: rotate the Kaggle API token. It was printed into a session transcript while reading pipeline/.env. It was never committed (verified with git log --all -- pipeline/.env), so this is precautionary rather than urgent.
+REMAINING: final README.md (description already drafted below + lineage graph + dashboard screenshots). MUST document the env-var export step — dbt does not read .env, so `set -a; source pipeline/.env; set +a` (or equivalent) is a required step before any dbt command, not a nicety. The README currently has no setup/run section at all
+REMAINING: rotate the Kaggle API token. It was printed into a session transcript while reading pipeline/.env. It was never committed (verified with git log --all -- pipeline/.env) and the unused KAGGLE_API_TOKEN line has since been deleted from pipeline/.env, so this is precautionary rather than urgent — but the value was exposed, so rotate it anyway.
 
 dbt operational notes (learned the hard way — not derivable from the code)
 
@@ -143,6 +145,10 @@ Views cascade-drop. Every model is materialized as a view, so rebuilding an upst
 `dbt build` stops downstream work when a test errors. One failing dim_orders test produced SKIP=34, so the fact models never got rebuilt. Combined with the cascade-drop above, this leaves fact views MISSING from the database while the run output still looks mostly fine. If tests suddenly fail with "relation does not exist", this is why — re-run the models, don't debug the tests.
 
 A malformed test definition fails SILENTLY. A data_tests: block written as a YAML mapping instead of a list was discarded with no error and no warning — the tests simply did not exist. `dbt ls --resource-type test --select <model>` is the only reliable way to confirm a test is real. Always run it after adding tests.
+
+dbt does NOT read .env. pipeline/load.py calls load_dotenv(), so the pipeline picks up pipeline/.env by itself; dbt has no equivalent. env_var() reads the process environment, so the vars must be exported into the shell first (`set -a; source ../pipeline/.env; set +a` from dbt_project/) or every one comes back empty. Symptom of getting this wrong: env_var('POSTGRES_PASSWORD') uses the one-argument form, which hard-fails at PARSE time ("Env var required but not provided"). A "Connection test: [ERROR] / Database Error" instead means the vars resolved fine and the problem is the database — usually that the Postgres container is not running.
+
+profiles.yml resolution order: --profiles-dir flag, then DBT_PROFILES_DIR, then the current working directory, then ~/.dbt/. Because dbt is run from inside dbt_project/, the committed file wins automatically with no flag. `dbt debug` prints a "Using profiles.yml file at ..." line — read it to confirm which one loaded. Also note env_var() always returns a string, so `port` needs a `| int` filter or dbt rejects the type.
 
 Postgres connection details (non-obvious): container olist_ecommerce_project-postgres-1, user `root` (NOT postgres), database `olist-ecommerce` (contains a hyphen, so it needs quoting in SQL), schemas `raw` (ingested tables) and `analytics` (all dbt models). Start it with `docker compose up -d postgres` — the Codespace does not keep it running between sessions.
 

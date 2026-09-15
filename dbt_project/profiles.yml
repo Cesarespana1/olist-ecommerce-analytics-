@@ -1,0 +1,12 @@
+olist_ecommerce_dbt:
+  outputs:
+    dev:
+      dbname: "{{ env_var('POSTGRES_DB', 'olist-ecommerce') }}"
+      host: "{{ env_var('HOST', 'localhost') }}"
+      pass: "{{ env_var('POSTGRES_PASSWORD') }}"
+      port: "{{ env_var('PORT', '5432') | int }}"
+      schema: analytics
+      threads: 4
+      type: postgres
+      user: "{{ env_var('POSTGRES_USER') }}"
+  target: dev
