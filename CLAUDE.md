@@ -103,8 +103,8 @@ olist-ecommerce-analytics/
 │   ├── uv.lock
 │   ├── models/
 │   │   ├── staging/            sources.yml + 9 stg_* models (1 per raw table)
-│   │   │                       ⬜ no schema.yml yet — all tests currently live in marts
-│   │   └── marts/              schema.yml (107 tests) + 9 models:
+│   │   │                       schema.yml (74 tests) + 9 stg_* models
+│   │   └── marts/              schema.yml (78 tests) + 9 models:
 │   │                           dim_customers, dim_date, dim_geolocation, dim_orders,
 │   │                           dim_products, dim_sellers,
 │   │                           fact_order_items, fact_payments, fact_reviews
@@ -125,15 +125,15 @@ pipeline/load.py written and working: chunked streaming ingestion (pd.read_csv i
 dbt project initialized and connected to Postgres (dbt Core 1.12.0 + dbt-postgres 1.11.0; note dbt Fusion does not support Postgres, so run dbt via `uv run dbt` from dbt_project/)
 Staging models written — 9 models, 1 per raw table, with explicit type casting
 Mart models written — full star schema, 9 marts (dim_customers, dim_date, dim_geolocation, dim_orders, dim_products, dim_sellers, fact_order_items, fact_payments, fact_reviews)
-dbt tests written — 107 tests: 98 pass, 9 documented warnings, 0 errors
+dbt tests written — 152 tests (74 staging + 78 marts): 132 pass, 20 documented warnings, 0 errors
 dbt docs generated (lineage graph viewable via target/static_index.html; port forwarding in Codespaces is unreliable, download the static file and open it locally)
 pipeline/.env.example written (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, HOST, PORT). KAGGLE_API_TOKEN was dropped — it was read by nothing (load.py reads only the 5 Postgres vars, and kagglehub authenticates via ~/.kaggle/kaggle.json or KAGGLE_USERNAME/KAGGLE_KEY, never that name)
 dbt_project/profiles.yml now lives in the repo instead of ~/.dbt/, using env_var() so it holds no credentials. ~/.dbt/profiles.yml deleted so there is no stale fallback. This closed a gap that was never on this list: before it, a clone could not run dbt at all
-REMAINING: staging schema.yml (all tests currently live in marts; a staging failure should say WHERE it broke, and the product_category_name not_null test belongs there)
-REMAINING: regenerate the lineage graph screenshot into screenshots/lineage_graph.png (the current one predates dim_geolocation)
-REMAINING: 3 dbt deprecation warnings (combination_of_columns needs nesting under `arguments:`) and dim_date's description has its date range reversed
+staging schema.yml written — 74 tests. Split rationale: staging asserts what the source and the casting own (natural-key uniqueness, composite grains, accepted_values, accepted_range, source referential integrity), marts asserts what the dimensional model itself creates (surrogate keys, FKs into dims, calculated columns). Passthrough not_null tests were REMOVED from marts to stop duplicating what staging now covers
+Source referential integrity added at staging (6 relationships tests, all 0 orphans): order_items to orders/products/sellers, payments to orders, reviews to orders, orders to customers. Rationale specific to this project: load.py is a CHUNKED streaming loader, so an interrupted load leaves orphan rows — this is the layer that answers "did the ingestion actually finish?" Marts relationships tests cannot catch it, since they check FKs against dims staging already built
 REMAINING: Power BI dashboard answering the 5 business questions
-REMAINING: final README.md (description already drafted below + lineage graph + dashboard screenshots). MUST document the env-var export step — dbt does not read .env, so `set -a; source pipeline/.env; set +a` (or equivalent) is a required step before any dbt command, not a nicety. The README currently has no setup/run section at all
+README.md written — overview, architecture, star schema, full setup-from-clone instructions (including the `set -a; source pipeline/.env; set +a` step and why it is required), a "what the tests actually found" section carrying the six investigations, and the testing-decisions list. Every figure in it was re-verified against the live database rather than copied from this file
+REMAINING: README screenshots. (1) screenshots/lineage_graph.png — the directory does not exist yet and the old screenshot predated dim_geolocation; regenerate with `dbt docs generate --static`, download target/static_index.html, open it locally (NOT in VS Code, scripts are sandboxed there) and screenshot the lineage view. (2) Power BI dashboard images. The README carries a visible "pending" line and an HTML comment for each, so nothing renders as a broken image until the files exist
 REMAINING: rotate the Kaggle API token. It was printed into a session transcript while reading pipeline/.env. It was never committed (verified with git log --all -- pipeline/.env) and the unused KAGGLE_API_TOKEN line has since been deleted from pipeline/.env, so this is precautionary rather than urgent — but the value was exposed, so rotate it anyway.
 
 dbt operational notes (learned the hard way — not derivable from the code)
@@ -149,6 +149,18 @@ A malformed test definition fails SILENTLY. A data_tests: block written as a YAM
 dbt does NOT read .env. pipeline/load.py calls load_dotenv(), so the pipeline picks up pipeline/.env by itself; dbt has no equivalent. env_var() reads the process environment, so the vars must be exported into the shell first (`set -a; source ../pipeline/.env; set +a` from dbt_project/) or every one comes back empty. Symptom of getting this wrong: env_var('POSTGRES_PASSWORD') uses the one-argument form, which hard-fails at PARSE time ("Env var required but not provided"). A "Connection test: [ERROR] / Database Error" instead means the vars resolved fine and the problem is the database — usually that the Postgres container is not running.
 
 profiles.yml resolution order: --profiles-dir flag, then DBT_PROFILES_DIR, then the current working directory, then ~/.dbt/. Because dbt is run from inside dbt_project/, the committed file wins automatically with no flag. `dbt debug` prints a "Using profiles.yml file at ..." line — read it to confirm which one loaded. Also note env_var() always returns a string, so `port` needs a `| int` filter or dbt rejects the type.
+
+`dbt build` TOTAL is a NODE count, not a test count. It runs models and tests together, so a `dbt build` TOTAL is 18 models + the test count, while `dbt test` TOTAL is tests only. Current figures come from `dbt test`: 152 tests, 132 pass, 20 warn, 0 errors. Confirm the split with `dbt ls --resource-type test --select staging|marts` (74 / 78). This file and the draft README once claimed "107 tests" by misreading a build summary — never quote a build TOTAL as a test count anywhere public.
+
+Timestamp not_null tests must be scoped PER COLUMN, not with one shared where clause. Each order timestamp becomes mandatory at a different lifecycle stage (created -> approved -> invoiced/processing -> shipped -> delivered, with canceled/unavailable as exits), so each needs its own scope:
+  order_approved_at             where order_status not in ('created','canceled')   -> 14 nulls (was 160)
+  order_delivered_carrier_date  where order_status in ('delivered','shipped')      -> 2  nulls (was 1,783)
+  order_delivered_customer_date where order_status = 'delivered'                   -> 8  nulls (was 2,965)
+Rule for the exclusion list: exclude a status only when NULL is semantically CORRECT there, never because it happens to be null often. 'created' is excluded because the payment never cleared (2 of those 5 are boleto, which is issued at checkout and frequently never paid); 'canceled' because it straddles both lifecycles (141 null, 484 with timestamps). Statuses with zero nulls (shipped, invoiced, processing, approved, unavailable) stay INSIDE the scope — a passing assertion is the point, not something to optimise away. The same three scopes are mirrored in marts on approved_date_key / delivered_carrier_date_key / delivered_customer_date_key; keep the two layers identical or they report different numbers for the same rule. is_delayed in dim_orders needs the same treatment (2,965 -> 8).
+
+A `where` clause is raw SQL passed straight through — dbt cannot validate it. `order_status not in 'canceled'` parsed as valid YAML, compiled fine, and only failed at execution with "syntax error at or near". NOT IN always needs a parenthesised list, even for one value.
+
+review_id duplication, verified: 789 review_ids appear more than once (814 rows beyond the first; 98,410 distinct ids across 99,224 rows). Both numbers are correct under different definitions — pick one and use it consistently. Checked every group: a repeated review_id NEVER spans two customer_unique_ids, so it is one satisfaction survey sent per customer covering several of their orders, not colliding ids. Magnitude is honest: the global average moves only 4.0864 -> 4.0888 when deduplicated. What it actually distorts is review COUNTS (off by 814) and small-group averages, and it makes the rows non-independent for business question 1.
 
 Postgres connection details (non-obvious): container olist_ecommerce_project-postgres-1, user `root` (NOT postgres), database `olist-ecommerce` (contains a hyphen, so it needs quoting in SQL), schemas `raw` (ingested tables) and `analytics` (all dbt models). Start it with `docker compose up -d postgres` — the Codespace does not keep it running between sessions.
 
@@ -185,7 +197,7 @@ Findings from actually investigating test failures instead of silencing them. Ke
 Anomaly investigation: 14 orders marked delivered with no approval timestamp
 All 14 have payment records totalling R$1,954.60, so the approval event definitely happened and only the timestamp is missing. Conclusion: a source-system logging gap affecting 0.015% of 96,478 delivered orders, not a business-process problem.
 Method point worth telling: review scores were considered as evidence and rejected. There is no causal path from "a timestamp failed to write" to "the customer liked the product", so review scores cannot discriminate between the hypotheses; payment records can.
-Baseline discipline: those 14 orders average 4.36 review score, which only means something next to the 4.16 population average. Their average was above baseline while their 5-star share (57.1%) was below it (59.2%) — metrics pointing in opposite directions is the signature of small-sample noise (n=14, SE about +/-0.37).
+Baseline discipline: those 14 orders average 4.36 review score, which only means something next to the 4.16 population average. NOTE that 4.16 / 59.2% is the DELIVERED-ORDERS baseline (n=96,361); across all 99,224 reviews it is 4.09 / 57.8%. Say "delivered orders" whenever quoting it, or a reviewer who recomputes on the full table will think the number is wrong. Their average was above baseline while their 5-star share (57.1%) was below it (59.2%) — metrics pointing in opposite directions is the signature of small-sample noise (n=14, SE about +/-0.37).
 
 review_id is not a primary key: 789 duplicates
 The same review_id appears on 2-3 different order_ids with the same score — one review covering several orders.
@@ -220,9 +232,9 @@ Design decisions to explain
 dim_orders is a bridge dimension: no fact table joins another fact table, everything routes through it. This is what prevents row-duplication fan-out in Power BI, and it is visible in the lineage graph.
 customer_id is unique per order while customer_unique_id identifies the person. The grain choice is deliberate and documented because it affects all repeat-customer analysis.
 dim_date has no upstream source because it is generated with dbt_utils.date_spine — expected for a date dimension, but worth being ready to explain.
-The 9 remaining test warnings are documented source-data gaps, each investigated, not thresholds set to make red disappear.
+The 20 remaining test warnings are documented source-data gaps, each investigated, not thresholds set to make red disappear. Each one now carries its explanation in the YAML description, so it renders into the dbt docs site rather than living only here.
 
-Final test suite: 107 tests, 98 pass, 9 documented warnings, 0 errors.
+Final test suite: 152 tests across 18 models — 132 pass, 20 documented warnings, 0 errors.
 
 Style / preference notes
 The user prefers honest, calibrated explanations (neither optimistic nor pessimistic), with step-by-step reasoning before the final answer.
