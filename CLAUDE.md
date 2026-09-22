@@ -54,7 +54,7 @@ date_key (PK), full date, day, month, year, day of week
 
 dim_geolocation (built — used for map visuals in Power BI)
 
-geo_zip_code_prefix (PK), geolocation_city, geolocation_state, geolocation_lat (averaged), geolocation_lng (averaged) ⚠️ Note: the same zip_code_prefix has multiple rows in the original CSV, so EVERY non-key column must be aggregated or joins will duplicate rows. 19,015 distinct zip prefixes expand to 27,912 distinct (zip, city, state) combinations, because Brazilian city names appear with inconsistent accents and punctuation (zip 13318 alone has five spellings spanning two town names). Resolved with avg() for the coordinates and mode() within group for city and state — mode() picks the most frequent spelling, whereas min() would have returned a different town entirely. Result is exactly one row per zip prefix, enforced by a unique test. Joins to dim_customers / dim_sellers on their zip_code_prefix columns.
+geo_zip_code_prefix (PK), geolocation_city, geolocation_state, geolocation_lat (averaged), geolocation_lng (averaged) ⚠️ Note: the same zip_code_prefix has multiple rows in the original CSV, so EVERY non-key column must be aggregated or joins will duplicate rows. 19,015 distinct zip prefixes expand to 27,912 distinct (zip, city, state) combinations, because Brazilian city names appear with inconsistent accents and punctuation (zip 13318 alone has five spellings spanning two town names). Resolved with avg() for the coordinates and mode() within group for city and state — mode() picks the most frequent spelling, whereas min() would have returned a different town entirely. Result is exactly one row per zip prefix, enforced by a unique test. Joins to dim_customers / dim_sellers on their zip_code_prefix columns — but NOTE that join is a Power BI relationship, not a dbt ref(): no model references dim_geolocation, so it shows as a DEAD END in the lineage graph (raw -> stg_geolocation -> dim_geolocation -> nothing). That is intentional on two counts: the zip join belongs in the BI semantic layer, and the model is being kept as the seed for a future cloud-lake project where it will be ingested and queried directly. Be ready for "why is this table here if nothing uses it?" — it is the one orphan a reviewer will spot in the graph. Practical upside: since nothing depends on it, the view cascade-drop hazard does not apply to this model.
 
 dim_orders (BRIDGE dimension — from olist_orders_dataset)
 
@@ -86,7 +86,7 @@ olist-ecommerce-analytics/
 ├── docker-compose.yml          postgres (healthcheck) + pipeline (depends_on: service_healthy)
 ├── .gitignore
 ├── CLAUDE.md
-├── README.md                   needs rewriting with the drafted description + screenshots
+├── README.md                   written — lineage graph embedded; Power BI screenshots pending
 ├── pipeline/
 │   ├── .env                    gitignored, never committed
 │   ├── .env.example            committed — placeholders for the 5 Postgres vars
@@ -114,7 +114,7 @@ olist-ecommerce-analytics/
 ├── powerbi/
 │   └── dashboard.pbix         ⬜ Pending
 └── screenshots/
-    └── lineage_graph.png      ⬜ Pending (current screenshot predates dim_geolocation)
+    └── lineage-graph.png       committed — note the HYPHEN, not an underscore
 Current project status
 Dataset explored and columns confirmed (customer_id vs customer_unique_id, order_items grain, payments 1:N)
 Star schema designed and validated (see above)
@@ -133,7 +133,8 @@ staging schema.yml written — 74 tests. Split rationale: staging asserts what t
 Source referential integrity added at staging (6 relationships tests, all 0 orphans): order_items to orders/products/sellers, payments to orders, reviews to orders, orders to customers. Rationale specific to this project: load.py is a CHUNKED streaming loader, so an interrupted load leaves orphan rows — this is the layer that answers "did the ingestion actually finish?" Marts relationships tests cannot catch it, since they check FKs against dims staging already built
 REMAINING: Power BI dashboard answering the 5 business questions
 README.md written — overview, architecture, star schema, full setup-from-clone instructions (including the `set -a; source pipeline/.env; set +a` step and why it is required), a "what the tests actually found" section carrying the six investigations, and the testing-decisions list. Every figure in it was re-verified against the live database rather than copied from this file
-REMAINING: README screenshots. (1) screenshots/lineage_graph.png — the directory does not exist yet and the old screenshot predated dim_geolocation; regenerate with `dbt docs generate --static`, download target/static_index.html, open it locally (NOT in VS Code, scripts are sandboxed there) and screenshot the lineage view. (2) Power BI dashboard images. The README carries a visible "pending" line and an HTML comment for each, so nothing renders as a broken image until the files exist
+screenshots/lineage-graph.png captured and embedded in the README, with a short read-off explaining the two properties the graph proves (no fact-to-fact edge, dim_date has no upstream) and why dim_geolocation is a leaf. Note the filename uses a HYPHEN
+REMAINING: Power BI dashboard screenshots for the README (the dashboard section still carries a visible "in progress" line, so nothing renders broken until the images exist)
 REMAINING: rotate the Kaggle API token. It was printed into a session transcript while reading pipeline/.env. It was never committed (verified with git log --all -- pipeline/.env) and the unused KAGGLE_API_TOKEN line has since been deleted from pipeline/.env, so this is precautionary rather than urgent — but the value was exposed, so rotate it anyway.
 
 dbt operational notes (learned the hard way — not derivable from the code)

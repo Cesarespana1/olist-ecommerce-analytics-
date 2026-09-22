@@ -56,8 +56,16 @@ A star schema, with one deliberate design rule: **a number that can be summed, a
 
 `dim_orders` carries five separate foreign keys into `dim_date` — purchase, approval, carrier handover, customer delivery, and estimated delivery — each a different role for the same dimension.
 
-<!-- TODO: add screenshots/lineage_graph.png (dbt docs generate --static, then screenshot the lineage view) -->
-> **Lineage graph:** generated with `dbt docs generate --static`. Screenshot pending.
+### Lineage
+
+![dbt lineage graph](screenshots/lineage-graph.png)
+
+Generated with `dbt docs generate --static`. Two things are worth reading off it:
+
+- **No fact table connects to another fact table.** All three route through `dim_orders`. That is the bridge dimension doing its job, and it is the property that prevents fan-out in Power BI.
+- **`dim_date` has no upstream node**, because it is generated with `dbt_utils.date_spine` rather than read from a source — expected for a date dimension.
+
+`dim_geolocation` is deliberately a leaf: the zip-prefix join to customers and sellers is a relationship in the BI model, not a dbt `ref()`.
 
 ---
 
