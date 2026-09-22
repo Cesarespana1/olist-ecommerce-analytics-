@@ -103,6 +103,21 @@ uv run dbt build
 
 `profiles.yml` lives in `dbt_project/` rather than `~/.dbt/` and reads every credential through `env_var()`, so the repository contains no secrets and a fresh clone is runnable.
 
+**4. Verify**
+
+```bash
+uv run dbt test
+# expected: PASS=132  WARN=20  ERROR=0  TOTAL=152
+```
+
+The 20 warnings are expected — they are the documented source-data gaps described below. Use `dbt test` rather than `dbt build` for this check: `build` runs the 18 models alongside the tests, so its TOTAL is a node count, not a test count.
+
+### Running on Windows
+
+Use **Git Bash**, not PowerShell — step 3 needs `set -a; source ...`, which is bash syntax. Docker Desktop publishes container ports straight to Windows `localhost`, so Power BI connects to `localhost:5432` with no extra setup.
+
+The repository ships a `.gitattributes` that forces LF line endings. This matters: Git for Windows defaults to `core.autocrlf=true`, which would rewrite `.env` on checkout and leave a trailing `\r` on every value — producing authentication and connection errors that look nothing like a line-ending problem.
+
 ---
 
 ## Data quality

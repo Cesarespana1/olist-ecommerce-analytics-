@@ -1,0 +1,9 @@
+# Keep LF in the working tree on every platform.
+# These files are consumed by bash (`source pipeline/.env`), Docker's env_file
+# parser and dbt — all of which break on CRLF, and all of which fail with errors
+# that look like authentication or connection problems rather than line endings.
+# Without this, Git for Windows' default core.autocrlf=true rewrites them on checkout.
+* text=auto eol=lf
+
+*.png  binary
+*.pbix binary
