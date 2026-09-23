@@ -71,7 +71,7 @@ Generated with `dbt docs generate --static`. Two things are worth reading off it
 
 ## Getting started
 
-**Prerequisites:** Docker and Docker Compose, [uv](https://docs.astral.sh/uv/), and a Kaggle account (the dataset downloads automatically).
+**Prerequisites:** Docker and Docker Compose, plus [uv](https://docs.astral.sh/uv/). No Kaggle account or API token is needed — the dataset is public and `kagglehub` fetches it anonymously (verified on a clean machine with an empty cache).
 
 **1. Configure environment variables**
 
@@ -80,20 +80,24 @@ cp pipeline/.env.example pipeline/.env
 # then edit pipeline/.env and set a real POSTGRES_PASSWORD
 ```
 
-**2. Start the database and load the raw data**
+**2. Load the variables into your shell**
+
+```bash
+set -a; source pipeline/.env; set +a
+```
+
+Do this before anything else, and from the repository root — the path is relative. Two different things depend on it: Docker Compose reads `HOST_PORT` from the *shell environment* when publishing the database port (`env_file:` does not feed Compose's own variable substitution), and dbt reads every credential through `env_var()`. Unlike the ingestion script, which calls `python-dotenv`, **dbt does not read `.env` by itself** — skip this step and every variable resolves empty.
+
+**3. Start the database and load the raw data**
 
 ```bash
 docker compose up -d --wait postgres   # Postgres, gated on its healthcheck
 docker compose up pipeline             # downloads the CSVs and loads schema "raw"
 ```
 
-**3. Build the models**
-
-dbt does **not** read `.env` — unlike the ingestion script, which uses `python-dotenv`. The variables must be exported into your shell first, or every `env_var()` resolves empty:
+**4. Build the models**
 
 ```bash
-set -a; source pipeline/.env; set +a
-
 cd dbt_project
 uv run dbt deps
 uv run dbt build
@@ -103,7 +107,7 @@ uv run dbt build
 
 `profiles.yml` lives in `dbt_project/` rather than `~/.dbt/` and reads every credential through `env_var()`, so the repository contains no secrets and a fresh clone is runnable.
 
-**4. Verify**
+**5. Verify**
 
 ```bash
 uv run dbt test
@@ -115,6 +119,8 @@ The 20 warnings are expected — they are the documented source-data gaps descri
 ### Running on Windows
 
 Use **Git Bash**, not PowerShell — step 3 needs `set -a; source ...`, which is bash syntax. Docker Desktop publishes container ports straight to Windows `localhost`, so Power BI connects to `localhost:5432` with no extra setup.
+
+If port 5432 is already in use — a native PostgreSQL install is the usual cause — set `HOST_PORT` and `PORT` to something free (5433) in `pipeline/.env`. The container keeps listening on 5432 internally, so nothing else changes. Watch for this specifically on Windows: Docker will report a successful `0.0.0.0:5432->5432/tcp` binding *even when a native service already holds the port*, and you end up authenticating against the wrong database while `docker compose exec` works perfectly.
 
 The repository ships a `.gitattributes` that forces LF line endings. This matters: Git for Windows defaults to `core.autocrlf=true`, which would rewrite `.env` on checkout and leave a trailing `\r` on every value — producing authentication and connection errors that look nothing like a line-ending problem.
 

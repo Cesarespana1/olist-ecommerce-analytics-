@@ -14,7 +14,7 @@ services:
     volumes:
       - olist_db:/var/lib/postgresql/data
     ports:
-      - 5432:5432
+      - "${HOST_PORT:-5432}:5432"
   pipeline:
     build: ./pipeline
     env_file:

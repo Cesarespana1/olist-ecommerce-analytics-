@@ -89,7 +89,7 @@ olist-ecommerce-analytics/
 ├── README.md                   written — lineage graph embedded; Power BI screenshots pending
 ├── pipeline/
 │   ├── .env                    gitignored, never committed
-│   ├── .env.example            committed — placeholders for the 5 Postgres vars
+│   ├── .env.example            committed — placeholders for the 5 Postgres vars + HOST_PORT
 │   ├── load.py                 chunked streaming ingestion → "raw" schema
 │   ├── Dockerfile              uv-based image
 │   ├── pyproject.toml          uv-managed, replaces requirements.txt
@@ -162,6 +162,21 @@ Rule for the exclusion list: exclude a status only when NULL is semantically COR
 A `where` clause is raw SQL passed straight through — dbt cannot validate it. `order_status not in 'canceled'` parsed as valid YAML, compiled fine, and only failed at execution with "syntax error at or near". NOT IN always needs a parenthesised list, even for one value.
 
 review_id duplication, verified: 789 review_ids appear more than once (814 rows beyond the first; 98,410 distinct ids across 99,224 rows). Both numbers are correct under different definitions — pick one and use it consistently. Checked every group: a repeated review_id NEVER spans two customer_unique_ids, so it is one satisfaction survey sent per customer covering several of their orders, not colliding ids. Magnitude is honest: the global average moves only 4.0864 -> 4.0888 when deduplicated. What it actually distorts is review COUNTS (off by 814) and small-group averages, and it makes the rows non-independent for business question 1.
+
+Running on Windows (verified end to end on a second machine, Git Bash + Docker Desktop)
+Use Git Bash, not PowerShell — `set -a; source pipeline/.env; set +a` is bash syntax. Docker Desktop publishes container ports straight to Windows localhost, so Power BI needs no tunnel. uv must be installed separately on Windows (`winget install --id=astral-sh.uv -e` from PowerShell, then REOPEN the terminal so PATH refreshes) — it only ever existed in the Codespace.
+
+PORT CONFLICT, the big one. Docker reported `0.0.0.0:5432->5432/tcp` and the container was healthy, yet every host-side connection failed auth while `docker compose exec psql` worked fine. Cause: a PostgreSQL service installed natively on Windows was also on 5432 and won. On Linux Docker would fail to bind; on Windows both can bind and the native service takes precedence. So a successful-looking PORTS column does NOT prove you are reaching the container. Signature of this bug: container-internal queries work, host-side auth fails, and changes made via `docker compose exec` (ALTER USER, ALTER SYSTEM) have no effect on what the client sees — because they are two different servers. Fix: move the HOST side only. docker-compose.yml now publishes `"${HOST_PORT:-5432}:5432"`, so set HOST_PORT=5433 and PORT=5433 in .env — no file edit, and the Codespace keeps 5432 by default. GOTCHA: Compose reads HOST_PORT from the SHELL ENVIRONMENT, not from pipeline/.env via env_file: (env_file feeds the container, not Compose's own variable substitution). So `set -a; source pipeline/.env; set +a` must run BEFORE `docker compose up`, or the port silently falls back to 5432. The README step order was rearranged for this reason. The container keeps 5432 internally so the pipeline service and exec are unaffected, and no -v is needed so the raw tables survive.
+
+NON-ENGLISH POSTGRES BREAKS EVERY ERROR MESSAGE. On a Spanish Windows install the server's errors come back Latin-1 encoded and psycopg2 decodes them as UTF-8, so EVERY connection error arrives as "'utf-8' codec can't decode byte 0xf3 in position 85: invalid continuation byte" and the real message is invisible. LC_ALL=C does not help — libpq on Windows uses the system locale, not env vars. To read the real error, catch UnicodeDecodeError and decode args[1], which holds the raw bytes:
+  except UnicodeDecodeError as e: print(e.args[1].decode('latin-1'))
+That turned an hour of guessing into one line: FATAL: la autentificacion password fallo para el usuario «root».
+
+psql -c wraps MULTIPLE statements in one transaction, so `ALTER SYSTEM` inside a multi-statement -c fails with "cannot run inside a transaction block". Give each statement its own -c.
+
+kagglehub needs NO Kaggle credentials for this dataset — confirmed on a fresh Windows machine with an empty cache and no ~/.kaggle/kaggle.json. The README prerequisite saying "a Kaggle account" is stricter than reality.
+
+Parity check for any new machine: `uv run dbt test` must report PASS=132 WARN=20 ERROR=0 TOTAL=152, and `dbt build` PASS=150 WARN=20 TOTAL=170 (170 = 18 models + 152 tests). Both verified on Windows.
 
 Postgres connection details (non-obvious): container olist_ecommerce_project-postgres-1, user `root` (NOT postgres), database `olist-ecommerce` (contains a hyphen, so it needs quoting in SQL), schemas `raw` (ingested tables) and `analytics` (all dbt models). Start it with `docker compose up -d postgres` — the Codespace does not keep it running between sessions.
 
