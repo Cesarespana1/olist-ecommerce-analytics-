@@ -15,7 +15,7 @@ The goal was to build a complete pipeline — from raw data ingestion to busines
 | | |
 |---|---|
 | **Models** | 18 (9 staging, 9 marts) |
-| **Data quality tests** | 152 — 132 pass, 20 documented warnings, 0 errors |
+| **Data quality tests** | 154 — 133 pass, 21 documented warnings, 0 errors |
 | **Grain** | order item · payment · review, bridged through `dim_orders` |
 
 ---
@@ -111,10 +111,10 @@ uv run dbt build
 
 ```bash
 uv run dbt test
-# expected: PASS=132  WARN=20  ERROR=0  TOTAL=152
+# expected: PASS=133  WARN=21  ERROR=0  TOTAL=154
 ```
 
-The 20 warnings are expected — they are the documented source-data gaps described below. Use `dbt test` rather than `dbt build` for this check: `build` runs the 18 models alongside the tests, so its TOTAL is a node count, not a test count.
+The 21 warnings are expected — they are the documented source-data gaps described below. Use `dbt test` rather than `dbt build` for this check: `build` runs the 18 models alongside the tests, so its TOTAL is a node count, not a test count.
 
 ### Running on Windows
 
@@ -130,7 +130,7 @@ The repository ships a `.gitattributes` that forces LF line endings. This matter
 
 Tests are split across both layers on purpose, so a failure says *where* it broke: staging asserts what the source and the casting are responsible for, marts asserts what the dimensional model itself creates.
 
-The 20 warnings are documented source-data gaps — each investigated, none silenced with a threshold chosen to make red disappear.
+The 21 warnings are documented source-data gaps — each investigated, none silenced with a threshold chosen to make red disappear.
 
 ### What the tests actually found
 
@@ -182,6 +182,7 @@ The 20 warnings are documented source-data gaps — each investigated, none sile
     ├── models/
     │   ├── staging/           sources.yml + schema.yml + 9 stg_* models
     │   └── marts/             schema.yml + 6 dimensions + 3 facts
+    ├── analyses/              business-question SQL, compiled with ref() but never materialized
     └── packages.yml           dbt_utils
 ```
 

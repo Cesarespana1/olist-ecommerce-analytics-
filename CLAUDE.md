@@ -58,7 +58,9 @@ geo_zip_code_prefix (PK), geolocation_city, geolocation_state, geolocation_lat (
 
 dim_orders (BRIDGE dimension — from olist_orders_dataset)
 
-order_id (PK), customer_key (FK), order_status, purchase_date_key, approved_date_key, delivered_carrier_date_key, delivered_customer_date_key, estimated_delivery_date_key (FKs → dim_date, each in a different role), is_delayed (calculated), actual_delivery_days (calculated)
+order_id (PK), customer_key (FK), order_status, purchase_date_key, approved_date_key, delivered_carrier_date_key, delivered_customer_date_key, estimated_delivery_date_key (FKs → dim_date, each in a different role), is_delayed (calculated), days_from_estimate (calculated), actual_delivery_days (calculated)
+
+All three calculated columns cast BOTH timestamps to ::date before comparing/subtracting. Two bugs this fixes: (1) timestamp - timestamp returns an INTERVAL in Postgres ("8 days 04:23:11"), not an integer, so actual_delivery_days was never a day count until the cast; (2) order_estimated_delivery_date is stored at 00:00:00, so a timestamp comparison flagged any order delivered later in the day ON the promised date as delayed, while days_from_estimate called it 0 — the two columns contradicted each other. With both on ::date they agree by construction; the check is that min(days_from_estimate) where is_delayed is 1, never 0. days_from_estimate = delivered - estimated, so negative = early. Observed range -147 to 188.
 
 fact_order_items (grain: order item — from olist_order_items_dataset)
 
@@ -104,10 +106,12 @@ olist-ecommerce-analytics/
 │   ├── models/
 │   │   ├── staging/            sources.yml + 9 stg_* models (1 per raw table)
 │   │   │                       schema.yml (74 tests) + 9 stg_* models
-│   │   └── marts/              schema.yml (78 tests) + 9 models:
+│   │   └── marts/              schema.yml (80 tests) + 9 models:
 │   │                           dim_customers, dim_date, dim_geolocation, dim_orders,
 │   │                           dim_products, dim_sellers,
 │   │                           fact_order_items, fact_payments, fact_reviews
+│   ├── analyses/               bq1_delivery_delay_review_score.sql, bq1_delay_review_correlation.sql
+│   │                           (compiled with ref(), never materialized; one query per file, bqN_ prefix)
 │   ├── macros/                 empty
 │   ├── tests/                  empty (no singular tests; all are generic, in schema.yml)
 │   └── target/                 gitignored — holds static_index.html for dbt docs
@@ -125,13 +129,14 @@ pipeline/load.py written and working: chunked streaming ingestion (pd.read_csv i
 dbt project initialized and connected to Postgres (dbt Core 1.12.0 + dbt-postgres 1.11.0; note dbt Fusion does not support Postgres, so run dbt via `uv run dbt` from dbt_project/)
 Staging models written — 9 models, 1 per raw table, with explicit type casting
 Mart models written — full star schema, 9 marts (dim_customers, dim_date, dim_geolocation, dim_orders, dim_products, dim_sellers, fact_order_items, fact_payments, fact_reviews)
-dbt tests written — 152 tests (74 staging + 78 marts): 132 pass, 20 documented warnings, 0 errors
+dbt tests written — 154 tests (74 staging + 80 marts): 133 pass, 21 documented warnings, 0 errors. Went from 152 to 154 when days_from_estimate gained a not_null (the 21st warning: same 8 undated delivered orders) and an accepted_range
 dbt docs generated (lineage graph viewable via target/static_index.html; port forwarding in Codespaces is unreliable, download the static file and open it locally)
 pipeline/.env.example written (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, HOST, PORT). KAGGLE_API_TOKEN was dropped — it was read by nothing (load.py reads only the 5 Postgres vars, and kagglehub authenticates via ~/.kaggle/kaggle.json or KAGGLE_USERNAME/KAGGLE_KEY, never that name)
 dbt_project/profiles.yml now lives in the repo instead of ~/.dbt/, using env_var() so it holds no credentials. ~/.dbt/profiles.yml deleted so there is no stale fallback. This closed a gap that was never on this list: before it, a clone could not run dbt at all
 staging schema.yml written — 74 tests. Split rationale: staging asserts what the source and the casting own (natural-key uniqueness, composite grains, accepted_values, accepted_range, source referential integrity), marts asserts what the dimensional model itself creates (surrogate keys, FKs into dims, calculated columns). Passthrough not_null tests were REMOVED from marts to stop duplicating what staging now covers
 Source referential integrity added at staging (6 relationships tests, all 0 orphans): order_items to orders/products/sellers, payments to orders, reviews to orders, orders to customers. Rationale specific to this project: load.py is a CHUNKED streaming loader, so an interrupted load leaves orphan rows — this is the layer that answers "did the ingestion actually finish?" Marts relationships tests cannot catch it, since they check FKs against dims staging already built
-REMAINING: Power BI dashboard answering the 5 business questions
+Business question 1 answered in SQL (dbt_project/analyses/bq1_*): bucketed per-order average score plus Pearson r = -0.27 (r² ≈ 0.07, n = 95,824 reviewed delivered orders). Scores are flat on the early side (4.32 -> 4.04) and drop ~1 star crossing the promised date (4.04 -> 2.99), flooring near 1.7. Findings and caveats live in the analysis files themselves
+REMAINING: Power BI dashboard answering the 5 business questions (Q1 visuals must reproduce the bq1 bucket table exactly — it is the reference answer)
 README.md written — overview, architecture, star schema, full setup-from-clone instructions (including the `set -a; source pipeline/.env; set +a` step and why it is required), a "what the tests actually found" section carrying the six investigations, and the testing-decisions list. Every figure in it was re-verified against the live database rather than copied from this file
 screenshots/lineage-graph.png captured and embedded in the README, with a short read-off explaining the two properties the graph proves (no fact-to-fact edge, dim_date has no upstream) and why dim_geolocation is a leaf. Note the filename uses a HYPHEN
 REMAINING: Power BI dashboard screenshots for the README (the dashboard section still carries a visible "in progress" line, so nothing renders broken until the images exist)
@@ -139,7 +144,7 @@ REMAINING: rotate the Kaggle API token. It was printed into a session transcript
 
 dbt operational notes (learned the hard way — not derivable from the code)
 
-Run dbt as `uv run dbt` from inside dbt_project/. A bare `dbt` resolves to dbt Fusion 2.0, which refuses Postgres outright ("the 'postgres' adapter is not yet supported by dbt Fusion"). This also blocks the official dbt VS Code extension.
+Run dbt as `uv run dbt` from inside dbt_project/. A bare `dbt` resolves to dbt Fusion 2.0, which refuses Postgres outright ("the 'postgres' adapter is not yet supported by dbt Fusion"). This also blocks the official dbt VS Code extension. EXCEPTION on the Windows machine with Smart App Control — there `uv run` must NOT be used; activate the venv and run `dbt` directly. See the SMART APP CONTROL entry in the Windows section for why.
 
 Views cascade-drop. Every model is materialized as a view, so rebuilding an upstream model DROPS all of its downstream views. Rebuilding dim_date silently destroyed all three fact tables — twice. Always rebuild descendants with `dbt run --select <model>+` (the trailing + means "and everything downstream").
 
@@ -151,7 +156,7 @@ dbt does NOT read .env. pipeline/load.py calls load_dotenv(), so the pipeline pi
 
 profiles.yml resolution order: --profiles-dir flag, then DBT_PROFILES_DIR, then the current working directory, then ~/.dbt/. Because dbt is run from inside dbt_project/, the committed file wins automatically with no flag. `dbt debug` prints a "Using profiles.yml file at ..." line — read it to confirm which one loaded. Also note env_var() always returns a string, so `port` needs a `| int` filter or dbt rejects the type.
 
-`dbt build` TOTAL is a NODE count, not a test count. It runs models and tests together, so a `dbt build` TOTAL is 18 models + the test count, while `dbt test` TOTAL is tests only. Current figures come from `dbt test`: 152 tests, 132 pass, 20 warn, 0 errors. Confirm the split with `dbt ls --resource-type test --select staging|marts` (74 / 78). This file and the draft README once claimed "107 tests" by misreading a build summary — never quote a build TOTAL as a test count anywhere public.
+`dbt build` TOTAL is a NODE count, not a test count. It runs models and tests together, so a `dbt build` TOTAL is 18 models + the test count, while `dbt test` TOTAL is tests only. Current figures come from `dbt test`: 154 tests, 133 pass, 21 warn, 0 errors. Confirm the split with `dbt ls --resource-type test --select staging|marts` (74 / 80). This file and the draft README once claimed "107 tests" by misreading a build summary — never quote a build TOTAL as a test count anywhere public.
 
 Timestamp not_null tests must be scoped PER COLUMN, not with one shared where clause. Each order timestamp becomes mandatory at a different lifecycle stage (created -> approved -> invoiced/processing -> shipped -> delivered, with canceled/unavailable as exits), so each needs its own scope:
   order_approved_at             where order_status not in ('created','canceled')   -> 14 nulls (was 160)
@@ -166,6 +171,20 @@ review_id duplication, verified: 789 review_ids appear more than once (814 rows 
 Running on Windows (verified end to end on a second machine, Git Bash + Docker Desktop)
 Use Git Bash, not PowerShell — `set -a; source pipeline/.env; set +a` is bash syntax. Docker Desktop publishes container ports straight to Windows localhost, so Power BI needs no tunnel. uv must be installed separately on Windows (`winget install --id=astral-sh.uv -e` from PowerShell, then REOPEN the terminal so PATH refreshes) — it only ever existed in the Codespace.
 
+SMART APP CONTROL BLOCKS uv's VENV INTERPRETER. Out of nowhere, `uv run dbt` started failing with "Failed to query Python interpreter ... Una directiva de Control de aplicaciones bloqueó este archivo. (os error 4551)". Nothing in the project changed — uv had auto-updated to 0.12.18 (built 2026-09-22), and Windows Smart App Control blocks binaries it has no reputation data for, so a freshly released uv ships a freshly unknown binary. Confirm SAC is the cause by reading `VerifiedAndReputablePolicyState` at `HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy` — 1 means enforcing, 2 evaluation, 0 off.
+
+The block is NARROW, which is what makes the fix cheap. `.venv/Scripts/python.exe` under uv is a ~47 KB LAUNCHER TRAMPOLINE, not a real interpreter, and only that file is blocked. The uv-managed base interpreter (~91 KB, `AppData\Roaming\uv\python\cpython-3.13-...`) runs fine, and so does pip's own ~47 KB `dbt.exe` console-script launcher — pip's launcher template has established reputation, uv's has not. Diagnose by size: 47 KB at `.venv/Scripts/python.exe` means trampoline, ~241 KB means a real copied interpreter.
+
+Fix, from dbt_project/, WITHOUT touching Smart App Control:
+  <path-to-uv-managed-python>\python.exe -m venv .venv
+  uv export --no-hashes --format requirements-txt > requirements-lock.txt
+  uv pip install -r requirements-lock.txt
+stdlib `venv` COPIES the real python.exe instead of installing a trampoline, and the copy inherits the base interpreter's trust. Deleting the old .venv first is optional and arguably worse — leaving it in place lets `venv` overwrite the trampoline while site-packages survive, so the reinstall step has nothing to do (it reports "Checked 59 packages" and installs nothing). Confirm it took by checking that pyvenv.cfg has LOST its `uv = <version>` key and gained stdlib's `executable`/`command` keys. requirements-lock.txt is derived from uv.lock, not a second source of truth — delete or gitignore it.
+
+CONSEQUENCE, and the reason line 142 carries an exception: do NOT go back to `uv run dbt` on this machine. `uv run` syncs the environment before running and will rebuild the trampoline venv, putting the block right back. Use `source .venv/Scripts/activate` then a bare `dbt` — which also dodges the dbt Fusion problem, since the venv's dbt wins on PATH. If a pip launcher ever gets blocked too, `python -m dbt.cli.main` bypasses every .exe shim.
+
+Smart App Control CAN be turned off (Windows Security -> App & browser control), which would end this whole class of problem permanently — but it is IRREVERSIBLE without a clean Windows reinstall, so it was deliberately not done. The venv rebuild above takes two minutes and leaves SAC intact.
+
 PORT CONFLICT, the big one. Docker reported `0.0.0.0:5432->5432/tcp` and the container was healthy, yet every host-side connection failed auth while `docker compose exec psql` worked fine. Cause: a PostgreSQL service installed natively on Windows was also on 5432 and won. On Linux Docker would fail to bind; on Windows both can bind and the native service takes precedence. So a successful-looking PORTS column does NOT prove you are reaching the container. Signature of this bug: container-internal queries work, host-side auth fails, and changes made via `docker compose exec` (ALTER USER, ALTER SYSTEM) have no effect on what the client sees — because they are two different servers. Fix: move the HOST side only. docker-compose.yml now publishes `"${HOST_PORT:-5432}:5432"`, so set HOST_PORT=5433 and PORT=5433 in .env — no file edit, and the Codespace keeps 5432 by default. GOTCHA: Compose reads HOST_PORT from the SHELL ENVIRONMENT, not from pipeline/.env via env_file: (env_file feeds the container, not Compose's own variable substitution). So `set -a; source pipeline/.env; set +a` must run BEFORE `docker compose up`, or the port silently falls back to 5432. The README step order was rearranged for this reason. The container keeps 5432 internally so the pipeline service and exec are unaffected, and no -v is needed so the raw tables survive.
 
 NON-ENGLISH POSTGRES BREAKS EVERY ERROR MESSAGE. On a Spanish Windows install the server's errors come back Latin-1 encoded and psycopg2 decodes them as UTF-8, so EVERY connection error arrives as "'utf-8' codec can't decode byte 0xf3 in position 85: invalid continuation byte" and the real message is invisible. LC_ALL=C does not help — libpq on Windows uses the system locale, not env vars. To read the real error, catch UnicodeDecodeError and decode args[1], which holds the raw bytes:
@@ -176,7 +195,9 @@ psql -c wraps MULTIPLE statements in one transaction, so `ALTER SYSTEM` inside a
 
 kagglehub needs NO Kaggle credentials for this dataset — confirmed on a fresh Windows machine with an empty cache and no ~/.kaggle/kaggle.json. The README prerequisite saying "a Kaggle account" is stricter than reality.
 
-Parity check for any new machine: `uv run dbt test` must report PASS=132 WARN=20 ERROR=0 TOTAL=152, and `dbt build` PASS=150 WARN=20 TOTAL=170 (170 = 18 models + 152 tests). Both verified on Windows.
+Parity check for any new machine: `dbt test` must report PASS=133 WARN=21 ERROR=0 TOTAL=154, and `dbt build` PASS=151 WARN=21 TOTAL=172 (172 = 18 models + 154 tests). Both verified on Windows 2026-10-01 (via the activated venv, per the Smart App Control note).
+
+An accepted_range bound must sit OUTSIDE the observed range, not near it. days_from_estimate first got -150 / 150 and failed on 15 genuine late orders (152-188 days, spread evenly — a real tail, not garbage). Widened to -200 / 250 and the reason written into the YAML description, because loosening a failing test is exactly what this project otherwise refuses to do — it is legitimate only when the test was wrong rather than the data.
 
 Postgres connection details (non-obvious): container olist_ecommerce_project-postgres-1, user `root` (NOT postgres), database `olist-ecommerce` (contains a hyphen, so it needs quoting in SQL), schemas `raw` (ingested tables) and `analytics` (all dbt models). Start it with `docker compose up -d postgres` — the Codespace does not keep it running between sessions.
 
@@ -248,9 +269,9 @@ Design decisions to explain
 dim_orders is a bridge dimension: no fact table joins another fact table, everything routes through it. This is what prevents row-duplication fan-out in Power BI, and it is visible in the lineage graph.
 customer_id is unique per order while customer_unique_id identifies the person. The grain choice is deliberate and documented because it affects all repeat-customer analysis.
 dim_date has no upstream source because it is generated with dbt_utils.date_spine — expected for a date dimension, but worth being ready to explain.
-The 20 remaining test warnings are documented source-data gaps, each investigated, not thresholds set to make red disappear. Each one now carries its explanation in the YAML description, so it renders into the dbt docs site rather than living only here.
+The 21 remaining test warnings are documented source-data gaps, each investigated, not thresholds set to make red disappear. Each one now carries its explanation in the YAML description, so it renders into the dbt docs site rather than living only here.
 
-Final test suite: 152 tests across 18 models — 132 pass, 20 documented warnings, 0 errors.
+Final test suite: 154 tests across 18 models — 133 pass, 21 documented warnings, 0 errors.
 
 Style / preference notes
 The user prefers honest, calibrated explanations (neither optimistic nor pessimistic), with step-by-step reasoning before the final answer.

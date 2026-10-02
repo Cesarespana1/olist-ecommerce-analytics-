@@ -179,20 +179,41 @@ models:
           to: ref('dim_date')
           field: date_key
   - name: is_delayed
-    description: >
+    description: |
       Boolean value indicating if the order was delivered after the estimated delivery date.
     data_tests:
     - not_null:
         config:
           where: "order_status = 'delivered'"
           warn_if: ">0"
-          error_if: ">3000"
+          error_if: ">10"
     - accepted_values:
         arguments:
           values: [ 'true', 'false' ]
+  - name: days_from_estimate
+    description: |
+      Integer which contains the difference between the date when customer received its order
+      and the estimated delivery date.
+      Note: Orders that arrived earlier than the estimated delivery are negative
+      Orders that arrived later contain positive values.
+      Observed range is -147 to 188. The accepted_range bounds (-200 / 250) sit deliberately
+      outside it: an earlier -150 / 150 bound failed on 15 genuine late orders (152 to 188 days),
+      so the test now guards against implausible values rather than the real tail.
+      The not_null test warns on 8 delivered orders: the same 8 with no recorded delivery date
+      documented on delivered_customer_date_key, so their delay cannot be calculated.
+    data_tests:
+    - not_null:
+        config:
+          where: "order_status = 'delivered'"
+          warn_if: ">0"
+          error_if: ">10"
+    - dbt_utils.accepted_range:
+        arguments:
+          min_value: -200
+          max_value: 250
   - name: actual_delivery_days
     description: >
-      Total time taken for the order to be delivered to the customer.
+      Total days taken for the order to be delivered to the customer.
     data_tests:
     - not_null:
         config:

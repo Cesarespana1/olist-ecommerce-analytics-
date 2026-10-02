@@ -7,8 +7,9 @@ select
     dd_delivered_carrier_date.date_key as delivered_carrier_date_key, 
     dd_delivered_customer_date.date_key as delivered_customer_date_key, 
     dd_estimated_delivery_date.date_key as estimated_delivery_date_key, 
-    orders.order_delivered_customer_date > orders.order_estimated_delivery_date as is_delayed, 
-    orders.order_delivered_customer_date - orders.order_purchase_timestamp as actual_delivery_days
+    orders.order_delivered_customer_date::date > orders.order_estimated_delivery_date::date as is_delayed,
+    orders.order_delivered_customer_date::date - orders.order_estimated_delivery_date::date as days_from_estimate, 
+    orders.order_delivered_customer_date::date - orders.order_purchase_timestamp::date as actual_delivery_days
 from {{ ref('stg_orders') }} as orders 
 left join {{ ref('dim_customers') }} as dim_customers
 on dim_customers.customer_id = orders.customer_id
